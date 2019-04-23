@@ -21,6 +21,7 @@
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include <lwip/ip_addr.h>
+#include <lwip/ip6.h>
 #include <lwip/dns.h>
 
 #define IP6_SIZE 16
@@ -52,6 +53,7 @@ static bool ip4_connect(socket_t* sock, remote_addr_t* addr)
 	return true;
 }
 
+#ifdef HAVE_IP6
 static bool ip6_connect(socket_t* sock, remote_addr_t* addr)
 {
 	struct sockaddr_in6 ip;
@@ -76,6 +78,12 @@ static bool ip6_connect(socket_t* sock, remote_addr_t* addr)
 
 	return true;
 }
+#else
+static bool ip6_connect(socket_t* sock, remote_addr_t* addr)
+{
+	return false;
+}
+#endif
 
 static size_t socket_available(const socket_t* socket)
 {
@@ -171,17 +179,53 @@ socket_t* udp_socket_create(remote_addr_t* remote)
 	return sock;
 }
 
+#ifdef HAVE_IP6
+static ssize_t udp6_send_to(socket_t* socket, const void *data, size_t length, remote_addr_t* remote)
+{
+	struct sockaddr_in6 ip6;
+
+	memcpy(ip6.sin6_addr.un.u8_addr, remote->addr.ip6_addr.ip, IP6_SIZE);
+	ip6.sin6_family = AF_INET6;
+	ip6.sin6_port = remote->port;
+	return sendto(*socket, data, length, 0, (struct sockaddr*)&ip6, sizeof(ip6));
+}
+
+static ssize_t udp6_recv_from(socket_t* socket, void *data, size_t length, remote_addr_t* remote)
+{
+	struct sockaddr_in6 ip6;
+	socklen_t socklen;
+	ssize_t rv;
+
+	socklen = sizeof(ip6);
+	rv = recvfrom(*socket, data, length, 0, (struct sockaddr*)&ip6, &socklen);
+
+	if(rv < 0)
+		return rv;
+
+	remote->port = ip6.sin6_port;
+	memcpy(remote->addr.ip6_addr.ip, ip6.sin6_addr.un.u8_addr, IP6_SIZE);
+	
+	return rv;
+}
+#else
+static ssize_t udp6_send_to(socket_t* socket, const void *data, size_t length, remote_addr_t* remote)
+{
+	return -1;
+}
+
+static ssize_t udp6_recv_from(socket_t* socket, void *data, size_t length, remote_addr_t* remote)
+{
+	return -1;
+}
+#endif
+
 ssize_t udp_send_to(socket_t* socket, const void *data, size_t length, remote_addr_t* remote)
 {
 	struct sockaddr_in ip;
-	struct sockaddr_in6 ip6;
 	ssize_t rv;
 
 	if(remote->version == 6) {
-		memcpy(ip6.sin6_addr.un.u8_addr, remote->addr.ip6_addr.ip, IP6_SIZE);
-		ip6.sin6_family = AF_INET6;
-		ip6.sin6_port = remote->port;
-		rv = sendto(*socket, data, length, 0, (struct sockaddr*)&ip6, sizeof(ip6));
+		rv = udp6_send_to(socket, data, length, remote);
 	} else {
 		ip.sin_family = AF_INET;
 		ip.sin_port = remote->port;
@@ -195,19 +239,11 @@ ssize_t udp_send_to(socket_t* socket, const void *data, size_t length, remote_ad
 ssize_t udp_recv_from(socket_t* socket, void *data, size_t length, remote_addr_t* remote)
 {
 	struct sockaddr_in ip;
-	struct sockaddr_in6 ip6;
 	ssize_t rv;
 	socklen_t socklen;
 
 	if(remote->version == 6) {
-		socklen = sizeof(ip6);
-		rv = recvfrom(*socket, data, length, 0, (struct sockaddr*)&ip6, &socklen);
-
-		if(rv < 0)
-			return rv;
-
-		remote->port = ip6.sin6_port;
-		memcpy(remote->addr.ip6_addr.ip, ip6.sin6_addr.un.u8_addr, IP6_SIZE);
+		rv = udp6_recv_from(socket, data, length, remote);
 	} else {
 		socklen = sizeof(ip);
 		rv = recvfrom(*socket, data, length, 0, (struct sockaddr*)&ip, &socklen);
@@ -279,6 +315,7 @@ static bool bind_ipv4(const socket_t* sock, remote_addr_t* addr, uint16_t port)
 	return lwip_bind(fd, (struct sockaddr*)&server, sizeof(server)) < 0 ? false : true;
 }
 
+#ifdef HAVE_IP6
 static bool bind_ipv6(const socket_t* sock, remote_addr_t* addr, uint16_t port)
 {
 	int fd;
@@ -294,6 +331,12 @@ static bool bind_ipv6(const socket_t* sock, remote_addr_t* addr, uint16_t port)
 
 	return bind(fd, (struct sockaddr*)&server, sizeof(server)) < 0 ? false : true;
 }
+#else
+static bool bind_ipv6(const socket_t* sock, remote_addr_t* addr, uint16_t port)
+{
+	return false;
+}
+#endif
 
 bool server_socket_bind_to(socket_t* sock, remote_addr_t* remote, uint16_t port)
 {
@@ -357,6 +400,7 @@ socket_t* server_socket_accept(socket_t* socket)
 	return client;
 }
 
+#ifdef HAVE_IP6
 static void dns_host_found_cb(const char *cb, const ip_addr_t* ip, void *arg)
 {
 	remote_addr_t *addr;
@@ -409,3 +453,46 @@ int dns_resolve_host(const char *host, remote_addr_t* addr)
 
 	return rv;
 }
+#else
+static void dns_host_found_cb(const char *cb, const ip_addr_t* ip, void *arg)
+{
+	remote_addr_t *addr;
+
+	addr = arg;
+	assert(arg);
+
+	print_dbg("DNS host found CB!\n");
+	addr->version = 4;
+	addr->addr.ip4_addr.ip = ip->addr;
+
+	lwiot_event_signal(lwiot_dns_event);
+}
+
+/* DNS */
+int dns_resolve_host(const char *host, remote_addr_t* addr)
+{
+	ip_addr_t ip;
+	int rv;
+
+	assert(lwiot_dns_event != NULL);
+	rv = dns_gethostbyname(host, &ip, dns_host_found_cb, addr);
+
+	switch(rv) {
+	case ERR_OK:
+		addr->version = 4;
+		addr->addr.ip4_addr.ip = ip.addr;
+
+		rv = -EOK;
+		break;
+
+	case ERR_INPROGRESS:
+		rv = lwiot_event_wait(lwiot_dns_event, FOREVER);
+		break;
+
+	default:
+		return -EINVALID;
+	}
+
+	return rv;
+}
+#endif
