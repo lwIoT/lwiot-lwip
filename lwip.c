@@ -31,6 +31,13 @@
 
 lwiot_event_t* lwiot_dns_event;
 
+void socket_set_timeout(socket_t* sock, time_t tmo)
+{
+	tmo *= 1000;
+	lwip_setsockopt(*sock, SOL_SOCKET, SO_RCVTIMEO, (void*)&tmo, sizeof(tmo));
+	lwip_setsockopt(*sock, SOL_SOCKET, SO_SNDTIMEO, (void*)&tmo, sizeof(tmo));
+}
+
 static bool ip4_connect(socket_t* sock, remote_addr_t* addr)
 {
 	struct sockaddr_in sockaddr;
@@ -227,12 +234,6 @@ void socket_close(socket_t* socket)
 	assert(socket);
 	close(*socket);
 	lwiot_mem_free(socket);
-}
-
-void socket_set_timeout(socket_t *sock, int tmo)
-{
-	assert(sock);
-	setsockopt(*sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &tmo, sizeof(int));
 }
 
 /* SERVER OPS */
