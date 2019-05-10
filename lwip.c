@@ -32,9 +32,13 @@
 
 lwiot_event_t* lwiot_dns_event;
 
-void socket_set_timeout(socket_t* sock, time_t tmo)
+void socket_set_timeout(socket_t* sock, time_t timeout)
 {
-	tmo *= 1000;
+	struct timeval tmo;
+
+	tmo.tv_usec = 0;
+	tmo.tv_sec = timeout;
+
 	lwip_setsockopt(*sock, SOL_SOCKET, SO_RCVTIMEO, (void*)&tmo, sizeof(tmo));
 	lwip_setsockopt(*sock, SOL_SOCKET, SO_SNDTIMEO, (void*)&tmo, sizeof(tmo));
 }
