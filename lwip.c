@@ -36,6 +36,9 @@ void socket_set_timeout(socket_t* sock, time_t timeout)
 {
 	struct timeval tmo;
 
+	if(sock == NULL)
+		return;
+
 	tmo.tv_usec = 0;
 	tmo.tv_sec = timeout;
 
