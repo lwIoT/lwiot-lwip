@@ -418,6 +418,12 @@ static void dns_host_found_cb(const char *cb, const ip_addr_t* ip, void *arg)
 
 	print_dbg("DNS host found CB!\n");
 
+	if(ip == NULL) {
+		addr->version = -1;
+		lwiot_event_signal(lwiot_dns_event);
+		return;
+	}
+
 	if(ip->type == IPADDR_TYPE_V4 || ip->type == IPADDR_TYPE_ANY) {
 		addr->version = 4;
 		addr->addr.ip4_addr.ip = ip->u_addr.ip4.addr;
@@ -453,6 +459,9 @@ int dns_resolve_host(const char *host, remote_addr_t* addr)
 
 	case ERR_INPROGRESS:
 		rv = lwiot_event_wait(lwiot_dns_event, FOREVER);
+
+		if(addr->version == -1)
+			rv = -EINVALID;
 		break;
 
 	default:
@@ -468,6 +477,15 @@ static void dns_host_found_cb(const char *cb, const ip_addr_t* ip, void *arg)
 
 	addr = arg;
 	assert(arg);
+
+	if(lwiot_dns_timeout)
+		return;
+
+	if(ip == NULL) {
+		addr->version = -1;
+		lwiot_event_signal(lwiot_dns_event);
+		return;
+	}
 
 	print_dbg("DNS host found CB!\n");
 	addr->version = 4;
@@ -495,6 +513,9 @@ int dns_resolve_host(const char *host, remote_addr_t* addr)
 
 	case ERR_INPROGRESS:
 		rv = lwiot_event_wait(lwiot_dns_event, FOREVER);
+
+		if(addr->version == -1)
+			rv = -EINVALID;
 		break;
 
 	default:
